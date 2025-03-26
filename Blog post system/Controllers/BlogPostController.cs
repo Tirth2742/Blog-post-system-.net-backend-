@@ -1,10 +1,15 @@
 ﻿using Blog_post_system.Data;
 using Blog_post_system.entities;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 
 namespace Blog_post_system.Controllers
@@ -14,11 +19,13 @@ namespace Blog_post_system.Controllers
     public class BlogPostController : ControllerBase
     {
         private readonly BlogData data;
-
-        public BlogPostController(BlogData context)
+        private readonly IConfiguration _configuration;
+        public BlogPostController(BlogData context  , IConfiguration configuration)
         {
+            _configuration = configuration;
             data = context;
         }
+        [Authorize]
         [HttpGet]
         public async Task<IActionResult> GetAllBlog()
         {
@@ -37,6 +44,7 @@ namespace Blog_post_system.Controllers
                 .ToListAsync();
             return Ok(blogs);
         }
+        [Authorize]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetBlogById(Guid id)
         {
@@ -55,6 +63,7 @@ namespace Blog_post_system.Controllers
                 .FirstOrDefaultAsync(a=>a.Id == id);
             return Ok(blogs);
         }
+        [Authorize]
         [HttpGet("mypost/{authorId}")]
         public async Task<IActionResult> GetAllMyBlog(Guid authorId)
         {
@@ -87,14 +96,36 @@ namespace Blog_post_system.Controllers
         {
             string email = login.GetProperty("email").GetString();
             string password = login.GetProperty("password").GetString();
+
             var user = await data.Users.FirstOrDefaultAsync(u => u.Email == email);
             if (user == null || password != user.Password)
             {
                 return Unauthorized("Invalid email or password.");
             }
-            return Ok(user.Id);
 
+            // Generate JWT Token
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(_configuration["JwtSettings:Key"]);
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(new[]
+                {
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.Username),
+            new Claim(ClaimTypes.Email, user.Email)
+        }),
+                Expires = DateTime.UtcNow.AddMinutes(60),
+                Issuer = _configuration["JwtSettings:Issuer"],
+                Audience = _configuration["JwtSettings:Audience"],
+                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+            };
+
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+            var tokenString = tokenHandler.WriteToken(token);
+
+            return Ok(new { Token = tokenString, UserId = user.Id, Username = user.Username });
         }
+        [Authorize]
         [HttpPost]
         public async Task<IActionResult> PublishBlog( Blogpost blog)
         {
@@ -121,6 +152,7 @@ namespace Blog_post_system.Controllers
 
             return Ok("successfully created");
         }
+        [Authorize]
         [HttpGet("filter")]
         public async Task<IActionResult> BlogFilter(string? category , string ?author , string? daterange , DateTime?fromdate , DateTime? todate)
         {
@@ -165,6 +197,7 @@ namespace Blog_post_system.Controllers
             return Ok(blogs.ToList());
 
         }
+        [Authorize]
         [HttpGet("search")]
         public async Task<IActionResult> BlogSearch(string? st)
         {
@@ -188,6 +221,7 @@ namespace Blog_post_system.Controllers
          
             return Ok(blogs.ToList());
         }
+        [Authorize]
         [HttpPut("{id}")]
         public async Task<IActionResult> BlogEdit([FromBody] JsonElement updatedBlog , Guid id)
         {
@@ -207,7 +241,7 @@ namespace Blog_post_system.Controllers
             return Ok("updated successfully");
 
         }
-
+        [Authorize]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteBlogPost(Guid id)
         {
